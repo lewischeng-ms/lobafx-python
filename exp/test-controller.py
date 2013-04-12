@@ -155,8 +155,7 @@ class LoadBalancer(EventMixin):
 		msg.actions.append(of.ofp_action_output(port = self.privatePort))
 		self.connection.send(msg)
 
-	def forwardProxy(self, packet):
-		return
+	def forwardProxy(self, packet, buffer_id):
 		log.debug('Installing flow for forward proxy on switch %d' % self.dpid)
 
 		# From exterior to interior.
@@ -165,26 +164,23 @@ class LoadBalancer(EventMixin):
 		msg = of.ofp_flow_mod()
 		msg.match.dl_type = pkt.ethernet.IP_TYPE;
 		msg.match.nw_src = n.srcip
-		#msg.buffer_id = buffer_id
+		msg.buffer_id = buffer_id
 		msg.actions.append(of.ofp_action_nw_addr.set_dst(IPAddr('10.0.0.102')))
 		msg.actions.append(of.ofp_action_dl_addr.set_dst(self.hosts[IPAddr('10.0.0.102')].mac))
 		msg.actions.append(of.ofp_action_output(port = self.privatePort))
 		
 		self.connection.send(msg)
 		
-	def reverseProxy(self, packet):
+	def reverseProxy(self, packet, buffer_id):
 		log.debug('Installing flow for reverse proxy on switch %d' % self.dpid)
 
 		# From interior to exterior.
-		#n = packet.find("ipv4")
+		n = packet.find("ipv4")
 
 		msg = of.ofp_flow_mod()
-		#msg.match.dl_type = pkt.ethernet.IP_TYPE;
-		#msg.match.nw_src = self.vhost.ip
-		#msg.match.nw_proto = pkt.ipv4.TCP_PROTOCOL
-		#msg.match.tp_src = 80
-		msg.match=of.ofp_match.from_packet(packet)
-		#msg.buffer_id = buffer_id
+		msg.match.dl_type = pkt.ethernet.IP_TYPE;
+		msg.match.nw_dst = n.dstip
+		msg.buffer_id = buffer_id
 		msg.actions.append(of.ofp_action_nw_addr.set_src(self.vhost.ip))
 		msg.actions.append(of.ofp_action_dl_addr.set_src(self.vhost.mac))
 		msg.actions.append(of.ofp_action_output(port = self.publicPort))
@@ -236,9 +232,6 @@ class LoadBalancer(EventMixin):
 		
 	def _handle_PacketIn(self, event):
 		packet = event.parse()
-		log.debug('PacketIn')
-		if packet.find("ipv4"):
-			self.reverseProxy(packet)
 		
 		self.macLearning(packet)
 		
@@ -250,7 +243,7 @@ class LoadBalancer(EventMixin):
 				if packet.find("icmp") and self.vhost.pingToMe(packet):
 					self.sendToPublicPort(self.vhost.replyPing(packet))
 				else:
-					self.forwardProxy(packet)
+					self.forwardProxy(packet, event.ofp.buffer_id)
 			else:
 				# Ignore packets that are not arp, ip ones.
 				pass
@@ -259,7 +252,7 @@ class LoadBalancer(EventMixin):
 			if packet.find("arp"):
 				self.replyArp(packet)
 			elif packet.find("ipv4"):
-				self.reverseProxy(packet)
+				self.reverseProxy(packet, event.ofp.buffer_id)
 			else:
 				# Ignore packets that are not arp, ip ones.
 				pass

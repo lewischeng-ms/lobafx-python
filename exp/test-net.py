@@ -3,21 +3,21 @@
 from mininet.net import Mininet
 from mininet.cli import CLI
 from mininet.log import setLogLevel, info
-from mininet.node import RemoteController, UserSwitch, OVSKernelSwitch
+from mininet.node import RemoteController, UserSwitch
 from mininet.topo import Topo
 from mininet.util import irange, ensureRoot
 
-class LobalTopo(Topo):
+class LobaTopo(Topo):
 	'''Single switch connected to p clients and q servers.'''
 
 	def __init__(self, p = 2, q = 3, **opts):
-		super(LobalTopo, self).__init__(**opts)
+		super(LobaTopo, self).__init__(**opts)
 
 		self.p = p
 		self.q = q
 
 		l2SwitchClients = self.addSwitch('s1')
-		loadBalancer = self.addSwitch('s2')
+		loadBalancer = self.addSwitch('s2', listenPort = 8889)
 		l2SwitchServers = self.addSwitch('s3')
 
 		self.addLink(l2SwitchClients, loadBalancer)
@@ -32,7 +32,7 @@ class LobalTopo(Topo):
 			self.addLink(server, l2SwitchServers)
 
 def testNet():
-	net = Mininet(topo = LobalTopo(), build = False, switch = OVSKernelSwitch)
+	net = Mininet(topo = LobaTopo(), build = False, switch = UserSwitch)
     
 	# Add my remote controller
 	info('*** Adding controller\n')
