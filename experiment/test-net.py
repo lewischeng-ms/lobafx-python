@@ -16,20 +16,18 @@ class LobaTopo(Topo):
 		self.p = p
 		self.q = q
 
-		l2SwitchClients = self.addSwitch('s1')
+		clientSwitch = self.addSwitch('s1')
 		loadBalancer = self.addSwitch('s2', listenPort = 8889)
-		l2SwitchServers = self.addSwitch('s3')
 
-		self.addLink(l2SwitchClients, loadBalancer)
-		self.addLink(loadBalancer, l2SwitchServers)
+		self.addLink(clientSwitch, loadBalancer)
 
 		for i in irange(1, p):
-			client = self.addHost('p%d' % i, ip = '10.0.0.%d' % i)
-			self.addLink(client, l2SwitchClients)
+			client = self.addHost('h%d' % i, ip = '10.0.0.%d' % i)
+			self.addLink(client, clientSwitch)
 
 		for i in irange(1, q):
-			server = self.addHost('q%d' % i, ip = '10.0.0.%d' % (100 + i))
-			self.addLink(server, l2SwitchServers)
+			server = self.addHost('m%d' % i, ip = '192.168.0.%d' % i)
+			self.addLink(server, loadBalancer)
 
 def testNet():
 	net = Mininet(topo = LobaTopo(), build = False, switch = UserSwitch)

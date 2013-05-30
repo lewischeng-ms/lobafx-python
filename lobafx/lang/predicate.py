@@ -62,10 +62,10 @@ class AndExpression(Predicate):
 
 	def test(self, obj):
 		# If either lhs or rhs is None, operator & returns False.
-		if not lhs or not rhs:
+		if not self.leftOperand or not self.rightOperand:
 			return False
 		else:
-			return lhs.test(obj) and rhs.test(obj)
+			return self.leftOperand.test(obj) and self.rightOperand.test(obj)
 
 class OrExpression(Predicate):
 	def __init__(self, name = 'Or', lhs = None, rhs = None):
@@ -73,10 +73,10 @@ class OrExpression(Predicate):
 
 	def test(self, obj):
 		# If either lhs or rhs is None, operator | returns False.
-		if not lhs or not rhs:
+		if not self.leftOperand or not self.rightOperand:
 			return False
 		else:
-			return lhs.test(obj) or rhs.test(obj)
+			return self.leftOperand.test(obj) or self.rightOperand.test(obj)
 
 class NotExpression(Predicate):
 	def __init__(self, name = 'Not', rhs = None):
@@ -84,7 +84,7 @@ class NotExpression(Predicate):
 
 	def test(self, obj):
 		# If rhs is None, operator ~ returns False.
-		if not rhs:
+		if not self.rightOperand:
 			return False
 		else:
-			return not rhs.test(obj)
+			return not self.rightOperand.test(obj)

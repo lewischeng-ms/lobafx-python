@@ -11,6 +11,15 @@ class Action(Node):
 		Action._validateRhs(rhs)
 		self.selector = rhs
 		return self
+	
+	def _getSelection(self, event):
+		if self.selector:
+			return self.selector.select(event)
+		else:
+			return []
+
+	def perform(self, event):
+		pass
 
 	def debugPrint(self, indent = 0):
 		Action._printIndent(self.name, indent)

@@ -1,5 +1,4 @@
 from lobafx.lang.node import Node
-from lobafx.fx import core
 
 class Rule(Node):
 	def __init__(self, name = None, pred = None, acts = None):
@@ -7,8 +6,16 @@ class Rule(Node):
 
 		self.predicate = pred
 		self.actions = acts
+		
+		from lobafx.fx.core import ruleMgr
+		ruleMgr.register(self)
 
-		core.ruleMgr.register(self)
+	def testPredicate(self, event):
+		return self.predicate.test(event)
+
+	def performActions(self, event):
+		for action in self.actions:
+			action.perform(event)
 
 	def debugPrint(self, indent = 0):
 		Rule._printIndent(self.name, indent)
