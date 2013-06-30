@@ -7,7 +7,7 @@ from pox.lib.util import dpidToStr
 from pox.core import core
 import time
 
-log = core.getLogger()
+log = core.getLogger('fx.poxlib')
 
 class Anything(AtomicPredicate):
 	def test(self, event):

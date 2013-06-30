@@ -1,8 +1,8 @@
-#!/usr/bin/python
+#!/usr/bin/env python
 
 # Add pox directory to path
 import sys 
-sys.path.append('/home/mininet/pox')
+sys.path.append('/Users/lewischeng/Develop/pox')
 
 from lobafx.lang.predicate import AtomicPredicate
 from lobafx.lang.selector import Selector

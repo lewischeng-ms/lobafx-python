@@ -4,7 +4,7 @@ import pox.lib.packet as pkt
 from pox.lib.revent import *
 from pox.core import core
 
-log = core.getLogger()
+log = core.getLogger('nal.poxnal')
 
 import pox
 import pox.openflow
@@ -13,7 +13,7 @@ import pox.openflow.connection_arbiter as ca
 import logging
 import time
 
-# Copied from pox.py.
+# Adapted from pox.py.
 def _setup_logging():
 	# This is kind of a hack, but we need to keep track of the handler we
 	# install so that we can, for example, uninstall it later.  This code
