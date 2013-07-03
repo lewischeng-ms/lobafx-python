@@ -64,12 +64,15 @@ class Haha(Action):
 FromSwitch('00-00-00-00-00-01') >> [ L2Learn() ]
 
 vh = VirtualHost('10.0.0.254', '02:00:DE:AD:BE:EF', '00-00-00-00-00-02', 1)
-m1 = Host('192.168.0.1', 'D6:F6:C3:05:CA:B9')
-m2 = Host('192.168.0.2', '76:4F:72:F3:10:59')
-m3 = Host('192.168.0.3', '36:8A:3B:4D:EF:2E')
+m1 = Host('192.168.0.1', 'D6:F6:C3:05:CA:B9', 2)
+m2 = Host('192.168.0.2', '76:4F:72:F3:10:59', 3)
+m3 = Host('192.168.0.3', '36:8A:3B:4D:EF:2E', 4)
 
 (FromSwitch('00-00-00-00-00-02') & InPort(2) & HttpTo(vh)) >> \
-	[ Proxy(vh) % RandomMemberSelector([ m1, m2, m3 ]) ]
+	[ ForwardProxy(vh) % RandomMemberSelector([ m1, m2, m3 ]) ]
+
+(FromSwitch('00-00-00-00-00-02') & InPort(2) & HttpFrom(vh)) >> \
+	[ ReverseProxy(vh) % RandomMemberSelector([ m1, m2, m3 ]) ]
 
 
 ######## Startup core ########

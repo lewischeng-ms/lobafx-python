@@ -42,6 +42,7 @@ class InPort(AtomicPredicate):
 
 class HttpTo(AtomicPredicate):
 	def __init__(self, host):
+		super(HttpTo, self).__init__()
 		self.host = host
 
 	def test(self, event):
@@ -51,6 +52,19 @@ class HttpTo(AtomicPredicate):
 
 		return ipv4 != None and ipv4.dstip == host.ipAddr and \
 			tcp != None and tcp.dstport == 80
+
+class HttpFrom(AtomicPredicate):
+	def __init__(self, host):
+		super(HttpFrom, self).__init__()
+		self.host = host
+
+	def test(self, event):
+		packet = event.parse()
+		ipv4 = packet.find("ipv4")
+		tcp = packet.find("tcp")
+
+		return ipv4 != None and ipv4.srcip == host.ipAddr and \
+			tcp != None and tcp.srcport == 80
 
 class PrintError(Action):
 	def perform(self, event):
@@ -187,12 +201,14 @@ class VirtualHost(object):
 Represent a real host in the network.
 '''
 class Host(object):
-	def __init__(self, ipStr, macStr):
+	def __init__(self, ipStr, macStr, port):
 		self.ipStr = ipStr
 		self.ipAddr = IPAddr(ipStr)
 
 		self.macStr = macStr
 		self.macAddr = EthAddr(macStr)
+
+		self.port = port
 
 ######## Action: L2 Learning ########
 import pox.openflow.libopenflow_01 as of
@@ -295,10 +311,10 @@ class L2Learn(Action):
 				msg.buffer_id = event.ofp.buffer_id # 6a
 				self.connection.send(msg)
 
-######## Action: Proxy ########
-class Proxy(Action):
+######## Actions: ForwardProxy, ReverseProxy ########
+class ForwardProxy(Action):
 	def __init__(self, virtualHost):
-		super(Proxy, self).__init__()
+		super(ForwardProxy, self).__init__()
 		self.virtualHost = virtualHost
 
 	def perform(self, event):
@@ -318,8 +334,40 @@ class Proxy(Action):
 		msg.match = of.ofp_match.from_packet(packet, event.port)
 		msg.idle_timeout = 10
 		msg.hard_timeout = 30
-		msg.actions.append(of.ofp_action_output(port = port))
-		msg.buffer_id = event.ofp.buffer_id # 6a
+		msg.actions.append(of.ofp_action_nw_addr.set_dst(member.ipAddr))
+		msg.actions.append(of.ofp_action_dl_addr.set_dst(member.macAddr))
+		msg.actions.append(of.ofp_action_output(port = member.port))
+		msg.buffer_id = event.ofp.buffer_id
+
+		self.connection.send(msg)
+
+class ReverseProxy(Action):
+	def __init__(self, virtualHost):
+		super(ReverseProxy, self).__init__()
+		self.virtualHost = virtualHost
+
+	def perform(self, event):
+		# Get selection result from selector.
+		selection = self._getSelection(event)
+
+		if len(selection) < 1:
+			log.warning("No member is selected to proxy")
+			return
+
+		# Just get the first one.
+		member = selection[0]
+
+		# install rules to proxy the communication between
+		# virtualhost and member.
+		msg = of.ofp_flow_mod()
+		msg.match = of.ofp_match.from_packet(packet, event.port)
+		msg.idle_timeout = 10
+		msg.hard_timeout = 30
+		msg.actions.append(of.ofp_action_nw_addr.set_src(self.virtualHost.ipAddr))
+		msg.actions.append(of.ofp_action_dl_addr.set_src(self.virtualHost.macAddr))
+		msg.actions.append(of.ofp_action_output(port = self.virtualHost.port))
+		msg.buffer_id = event.ofp.buffer_id
+		
 		self.connection.send(msg)
 			
 class PrintTwo(Action):
