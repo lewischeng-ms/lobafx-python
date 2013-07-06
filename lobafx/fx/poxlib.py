@@ -40,40 +40,62 @@ class InPort(AtomicPredicate):
 	def test(self, event):
 		return isinstance(event, PacketIn) and event.port == self.port
 
-class HttpTo(AtomicPredicate):
-	def __init__(self, host):
-		super(HttpTo, self).__init__()
-		self.host = host
+class DstPort(AtomicPredicate):
+	def __init__(self, port):
+		super(DstPort, self).__init__()
+		self.port = port
 
 	def test(self, event):
+		if not isinstance(event, PacketIn):
+			return
+
 		packet = event.parse()
-		ipv4 = packet.find("ipv4")
 		tcp = packet.find("tcp")
 
-		return ipv4 != None and ipv4.dstip == host.ipAddr and \
-			tcp != None and tcp.dstport == 80
+		return tcp != None and tcp.dstport == self.port
 
-class HttpFrom(AtomicPredicate):
-	def __init__(self, host):
-		super(HttpFrom, self).__init__()
-		self.host = host
+class DstIp(AtomicPredicate):
+	def __init__(self, ipStr):
+		super(DstIp, self).__init__()
+		self.ipAddr = IPAddr(ipStr)
 
 	def test(self, event):
+		if not isinstance(event, PacketIn):
+			return
+
 		packet = event.parse()
 		ipv4 = packet.find("ipv4")
+
+		return ipv4 != None and ipv4.dstip == self.ipAddr
+
+def HttpTo(host):
+	return DstIp(host.ipStr) & DstPort(80)
+
+class SrcPort(AtomicPredicate):
+	def __init__(self, port):
+		super(SrcPort, self).__init__()
+		self.port = port
+
+	def test(self, event):
+		if not isinstance(event, PacketIn):
+			return
+
+		packet = event.parse()
 		tcp = packet.find("tcp")
 
-		return ipv4 != None and ipv4.srcip == host.ipAddr and \
-			tcp != None and tcp.srcport == 80
+		return tcp != None and tcp.srcport == self.port
+
+def HttpFromAny():
+	return SrcPort(80)
 
 class PrintError(Action):
 	def perform(self, event):
 		print 'Error: \'%s\' from switch %s' % (dpidToStr(event.dpid), event.asString())
 
-######## Predicate: ArpRequest ########
-class ArpRequest(AtomicPredicate):
+######## Predicate: ArpRequestTo ########
+class ArpRequestTo(AtomicPredicate):
 	def __init__(self, ipStr):
-		super(ArpRequest, self).__init__()
+		super(ArpRequestTo, self).__init__()
 		self.ipAddr = IPAddr(ipStr)
 
 	def test(self, event):
@@ -84,10 +106,32 @@ class ArpRequest(AtomicPredicate):
 			arp.prototype == arp.PROTO_TYPE_IP and \
 			arp.protodst == self.ipAddr
 
-######## Action: ArpReply ########
-class ArpReply(Action):
+######## Predicate: ArpRequest ########
+class ArpRequest(AtomicPredicate):
+	def test(self, event):
+		if not isinstance(event, PacketIn):
+			return
+
+		packet = event.parse()
+		arp = packet.find("arp")
+
+		return arp != None and arp.opcode == arp.REQUEST
+
+######## Predicate: ArpReply ########
+class ArpReply(AtomicPredicate):
+	def test(self, event):
+		if not isinstance(event, PacketIn):
+			return
+
+		packet = event.parse()
+		arp = packet.find("arp")
+
+		return arp != None and arp.opcode == arp.REPLY
+
+######## Action: ArpReplyWith ########
+class ArpReplyWith(Action):
 	def __init__(self, macStr):
-		super(ArpReply, self).__init__()
+		super(ArpReplyWith, self).__init__()
 		self.macAddr = EthAddr(macStr)
 
 	def perform(self, event):
@@ -119,17 +163,14 @@ class ArpReply(Action):
 
 ######## Predicate: EchoRequest ########
 class EchoRequest(AtomicPredicate):
-	def __init__(self, ipStr):
-		super(EchoRequest, self).__init__()
-		self.ipAddr = IPAddr(ipStr)
-
 	def test(self, event):
 		packet = event.parse()
-		ipv4 = packet.find("ipv4")
 		icmp = packet.find("icmp")
 
-		return icmp != None and  icmp.type == pkt.TYPE_ECHO_REQUEST and \
-			ipv4 != None and ipv4.dstip == self.ipAddr
+		return icmp != None and  icmp.type == pkt.TYPE_ECHO_REQUEST
+
+def EchoRequestTo(ipStr):
+	return EchoRequest() & DstIp(ipStr)
 
 ######## Action: EchoReply ########
 class EchoReply(Action):
@@ -166,13 +207,29 @@ class EchoReply(Action):
 		msg.actions.append(of.ofp_action_output(port = of.OFPP_IN_PORT))
 		event.connection.send(msg)
 
-######## VirtualHost ########
-'''
-Act as a virtual host in the network.
+######## Action: SimpleForward ########
+class SimpleForward(Action):
+	def __init__(self, port):
+		self.port = port
 
-Can reply to arp and ping as if it were a real host.
+	def perform(self, event):
+		if not isinstance(event, PacketIn):
+			return
+
+		msg = of.ofp_packet_out()
+		msg.actions.append(of.ofp_action_output(port = self.port))
+		msg.buffer_id = event.ofp.buffer_id
+		msg.in_port = event.port
+
+		event.connection.send(msg)
+
+######## VirtualGateway ########
 '''
-class VirtualHost(object):
+Act as a virtual gateway in the network.
+
+Can reply to arp and ping as if it were a real gateway.
+'''
+class VirtualGateway(object):
 	def __init__(self, ipStr, macStr, dpidStr, port):
 		self.ipStr = ipStr
 		self.ipAddr = IPAddr(ipStr)
@@ -188,13 +245,21 @@ class VirtualHost(object):
 		self._installDefaultRules()
 
 	def _installDefaultRules(self):
-		# The following rule makes the virtual host reply to arp requests.
-		(FromSwitch(self.dpidStr) & InPort(self.port) & ArpRequest(self.ipStr)) >> \
-			[ ArpReply(self.macStr) ]
+		# The makes the gateway reply to arp requests.
+		(FromSwitch(self.dpidStr) & InPort(self.port) & ArpRequestTo(self.ipStr)) >> \
+			[ ArpReplyWith(self.macStr) ]
 
-		# The following rule makes the virtual host reply to echo requests.
-		(FromSwitch(self.dpidStr) & InPort(self.port) & EchoRequest(self.ipStr)) >> \
+		# This makes the gateway reply to echo requests.
+		(FromSwitch(self.dpidStr) & InPort(self.port) & EchoRequestTo(self.ipStr)) >> \
 			[ EchoReply() ]
+
+		# This allows arp request to go out.
+		(FromSwitch(self.dpidStr) & ~InPort(self.port) & ArpRequest()) >> \
+			[ SimpleForward(self.port) ]
+
+		# This allows arp reply to go in.
+		(FromSwitch(self.dpidStr) & InPort(self.port) & ArpReply()) >> \
+			[ SimpleForward(of.OFPP_FLOOD) ]
 
 ######## Host ########
 '''
@@ -209,6 +274,8 @@ class Host(object):
 		self.macAddr = EthAddr(macStr)
 
 		self.port = port
+
+		self.load = 0
 
 ######## Action: L2 Learning ########
 import pox.openflow.libopenflow_01 as of
@@ -313,9 +380,8 @@ class L2Learn(Action):
 
 ######## Actions: ForwardProxy, ReverseProxy ########
 class ForwardProxy(Action):
-	def __init__(self, virtualHost):
+	def __init__(self):
 		super(ForwardProxy, self).__init__()
-		self.virtualHost = virtualHost
 
 	def perform(self, event):
 		# Get selection result from selector.
@@ -325,50 +391,50 @@ class ForwardProxy(Action):
 			log.warning("No member is selected to proxy")
 			return
 
-		# Just get the first one.
+		# Just need one.
 		member = selection[0]
 
-		# install rules to proxy the communication between
-		# virtualhost and member.
+		# Simulate inbalancing loads.
+		member.load += random.randint(1, 5)
+
+		packet = event.parse()
+
 		msg = of.ofp_flow_mod()
 		msg.match = of.ofp_match.from_packet(packet, event.port)
-		msg.idle_timeout = 10
-		msg.hard_timeout = 30
+		msg.idle_timeout = 3
+		msg.hard_timeout = 10
 		msg.actions.append(of.ofp_action_nw_addr.set_dst(member.ipAddr))
 		msg.actions.append(of.ofp_action_dl_addr.set_dst(member.macAddr))
 		msg.actions.append(of.ofp_action_output(port = member.port))
 		msg.buffer_id = event.ofp.buffer_id
 
-		self.connection.send(msg)
+		event.connection.send(msg)
 
 class ReverseProxy(Action):
-	def __init__(self, virtualHost):
+	def __init__(self, vgw):
 		super(ReverseProxy, self).__init__()
-		self.virtualHost = virtualHost
+		self.vgw = vgw
 
 	def perform(self, event):
-		# Get selection result from selector.
-		selection = self._getSelection(event)
+		packet = event.parse()
 
-		if len(selection) < 1:
-			log.warning("No member is selected to proxy")
-			return
-
-		# Just get the first one.
-		member = selection[0]
-
-		# install rules to proxy the communication between
-		# virtualhost and member.
 		msg = of.ofp_flow_mod()
 		msg.match = of.ofp_match.from_packet(packet, event.port)
-		msg.idle_timeout = 10
-		msg.hard_timeout = 30
-		msg.actions.append(of.ofp_action_nw_addr.set_src(self.virtualHost.ipAddr))
-		msg.actions.append(of.ofp_action_dl_addr.set_src(self.virtualHost.macAddr))
-		msg.actions.append(of.ofp_action_output(port = self.virtualHost.port))
+		msg.idle_timeout = 3
+		msg.hard_timeout = 10
+		msg.actions.append(of.ofp_action_nw_addr.set_src(self.vgw.ipAddr))
+		msg.actions.append(of.ofp_action_dl_addr.set_src(self.vgw.macAddr))
+		msg.actions.append(of.ofp_action_output(port = self.vgw.port))
 		msg.buffer_id = event.ofp.buffer_id
 		
-		self.connection.send(msg)
+		event.connection.send(msg)
+
+class PrintLoad(Action):
+	def perform(self, event):
+		print 'Load dist:',
+		for host in self._getSelection(event):
+			print host.load,
+		print
 			
 class PrintTwo(Action):
 	def perform(self, event):
@@ -383,15 +449,54 @@ class PrintEvent(Action):
 		elif isinstance(event, ConnectionDown):
 			print 'ConnectionDown from switch %s' % dpidToStr(event.dpid)	
 		elif isinstance(event, PacketIn):
-			print 'PacketIn from switch %s' % dpidToStr(event.dpid)
+			print 'PacketIn from switch %s [%d]' % (dpidToStr(event.dpid), event.port)
 		else:
 			print event
 
 import random
-class RandomMemberSelector(Selector):
+class RandomSelector(Selector):
 	def __init__(self, members):
-		super(RandomMemberSelector, self).__init__()
+		super(RandomSelector, self).__init__()
 		self.members = members
 
 	def select(self, event):
 		return [ random.choice(self.members) ]
+
+class RoundRobinSelector(Selector):
+	def __init__(self, members):
+		super(RoundRobinSelector, self).__init__()
+		self.members = members
+		self.index = 0
+
+	def select(self, event):
+		ret = [ self.members[self.index] ]
+		self.index = (self.index + 1) % len(self.members)
+		return ret
+
+class SelectLowestLoad(Selector):
+	def __init__(self, members):
+		super(SelectLowestLoad, self).__init__()
+		self.members = members
+
+	def select(self, event):
+		if len(self.members) < 1:
+			return []
+
+		minMember = self.members[0]
+		minLoad = minMember.load
+
+		for member in self.members:
+			if member.load < minLoad:
+				minMember = member
+				minLoad = member.load
+
+		return [ minMember ]
+
+
+class SelectAll(Selector):
+	def __init__(self, members):
+		super(SelectAll, self).__init__()
+		self.members = members
+
+	def select(self, event):
+		return self.members
