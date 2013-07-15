@@ -53,7 +53,7 @@ IsErrorIn() >> [PrintError()]
 
 # Collect link load.
 
-# Collect host load
+# Collect host load.
 
 # Test rules.
 s1 = FromSwitch('00-00-00-00-00-01')
@@ -71,6 +71,8 @@ s2 = FromSwitch('00-00-00-00-00-02')
 	  	PrintLoad() % SelectAll([ m1, m2, m3]) \
 	]
 (s2 & ~InPort(1) & HttpFromAny()) >> [ ReverseProxy(vg) ]
+
+HttpTo(vg) >> [ ApplyPath() % SelectLowestLoad([ p1, p2, p3 ]) ]
 
 ######## Startup core ########
 def startup():
