@@ -2,12 +2,14 @@ from lobafx.lang.predicate import AtomicPredicate
 from lobafx.lang.selector import Selector
 from lobafx.lang.action import Action
 from pox.lib.revent import *
-from pox.openflow import ConnectionUp, ConnectionDown, PacketIn, ErrorIn
+from pox.openflow import ConnectionUp, ConnectionDown, PacketIn, ErrorIn, PortStatsReceived
+from pox.core import GoingDownEvent
 from pox.lib.util import dpidToStr, strToDPID
 from pox.lib.addresses import EthAddr, IPAddr
 from pox.core import core
 import pox.openflow.libopenflow_01 as of
 import pox.lib.packet as pkt
+import threading
 import time
 
 log = core.getLogger('fx.poxlib')
@@ -23,6 +25,22 @@ class IsErrorIn(AtomicPredicate):
 class IsPacketIn(AtomicPredicate):
 	def test(self, event):
 		return isinstance(event, PacketIn)
+		
+class IsConnectionUp(AtomicPredicate):
+	def test(self, event):
+		return isinstance(event, ConnectionUp)
+		
+class IsConnectionDown(AtomicPredicate):
+	def test(self, event):
+		return isinstance(event, ConnectionDown)
+		
+class IsGoingDown(AtomicPredicate):
+	def test(self, event):
+		return isinstance(event, GoingDownEvent)
+
+class IsPortStatsReceived(AtomicPredicate):
+	def test(self, event):
+		return isinstance(event, PortStatsReceived)
 
 class FromSwitch(AtomicPredicate):
 	def __init__(self, dpidStr):
@@ -30,7 +48,7 @@ class FromSwitch(AtomicPredicate):
 		self.dpidStr = dpidStr
 
 	def test(self, event):
-		return dpidToStr(event.dpid) == self.dpidStr
+		return dpidToStr(event.connection.dpid) == self.dpidStr
 
 class InPort(AtomicPredicate):
 	def __init__(self, port):
@@ -67,6 +85,21 @@ class DstIp(AtomicPredicate):
 		ipv4 = packet.find("ipv4")
 
 		return ipv4 != None and ipv4.dstip == self.ipAddr
+        
+
+class SrcIp(AtomicPredicate):
+	def __init__(self, ipStr):
+		super(SrcIp, self).__init__()
+		self.ipAddr = IPAddr(ipStr)
+
+	def test(self, event):
+		if not isinstance(event, PacketIn):
+			return
+
+		packet = event.parse()
+		ipv4 = packet.find("ipv4")
+
+		return ipv4 != None and ipv4.srcip == self.ipAddr
 
 def HttpTo(host):
 	return DstIp(host.ipStr) & DstPort(80)
@@ -84,6 +117,9 @@ class SrcPort(AtomicPredicate):
 		tcp = packet.find("tcp")
 
 		return tcp != None and tcp.srcport == self.port
+
+def HttpFrom(host):
+    return SrcIp(host.ipStr) & SrcPort(80)
 
 def HttpFromAny():
 	return SrcPort(80)
@@ -276,6 +312,37 @@ class Host(object):
 		self.port = port
 
 		self.load = 0
+		
+		from lobafx.fx.core import hostMgr
+		hostMgr.register(self)
+
+######## Link ########
+'''
+Represent a link in the network.
+'''
+class Link(object):
+    def __init__(self, switch1, port1, switch2, port2):
+        self.switch1 = switch1
+        self.port1 = port1
+        self.switch2 = switch2
+        self.port2 = port2
+        self.stats = None
+		
+        from lobafx.fx.core import linkMgr
+        linkMgr.register(self)
+	
+    def __str__(self):
+        return "'%s[%d]' => '%s[%d]'" % ( \
+            self.switch1.dpidStr, \
+            self.port1, \
+            self.switch2.dpidStr, \
+            self.port2)
+			
+    @property
+    def load(self):
+        if self.stats is None:
+            return 0
+        return self.stats.tx_bytes + self.stats.rx_bytes
 
 ######## Action: L2 Learning ########
 import pox.openflow.libopenflow_01 as of
@@ -378,6 +445,71 @@ class L2Learn(Action):
 				msg.buffer_id = event.ofp.buffer_id # 6a
 				self.connection.send(msg)
 
+######## Actions: ApplyLink, ApplyReverseLink ########
+class ApplyForwardLink(Action):
+	def __init__(self):
+		super(ApplyForwardLink, self).__init__()
+    
+	def perform(self, event):
+		if not isinstance(event, PacketIn):
+			return
+		
+		selection = self._getSelection(event)
+        
+		if len(selection) < 1:
+			log.warning("No link is selected to apply")
+			return
+            
+		link = selection[0]
+		log.info("Apply link %s whose load is %d" % (link, link.load))
+        
+		if not link.switch1.test(event):
+			log.warning("The link is not associated to the switch")
+			return
+        
+		packet = event.parse()
+
+		msg = of.ofp_flow_mod()
+		msg.match = of.ofp_match.from_packet(packet)
+		msg.idle_timeout = 3
+		msg.hard_timeout = 10
+		msg.actions.append(of.ofp_action_output(port = link.port1))
+		msg.buffer_id = event.ofp.buffer_id
+
+		event.connection.send(msg)
+        
+class ApplyReverseLink(Action):
+	def __init__(self):
+		super(ApplyReverseLink, self).__init__()
+    
+	def perform(self, event):
+		if not isinstance(event, PacketIn):
+			return
+			
+		selection = self._getSelection(event)
+        
+		if len(selection) < 1:
+			log.warning("No link is selected to apply")
+			return
+            
+		link = selection[0]
+		log.info("Apply reverse link %s whose load is %d" % (link, link.load))
+        
+		if not link.switch2.test(event):
+			log.warning("The link is not associated to the switch")
+			return
+        
+		packet = event.parse()
+
+		msg = of.ofp_flow_mod()
+		msg.match = of.ofp_match.from_packet(packet)
+		msg.idle_timeout = 3
+		msg.hard_timeout = 10
+		msg.actions.append(of.ofp_action_output(port = link.port2))
+		msg.buffer_id = event.ofp.buffer_id
+
+		event.connection.send(msg)
+
 ######## Actions: ForwardProxy, ReverseProxy ########
 class ForwardProxy(Action):
 	def __init__(self):
@@ -393,9 +525,6 @@ class ForwardProxy(Action):
 
 		# Just need one.
 		member = selection[0]
-
-		# Simulate inbalancing loads.
-		member.load += random.randint(1, 5)
 
 		packet = event.parse()
 
@@ -452,7 +581,7 @@ class PrintEvent(Action):
 			print 'PacketIn from switch %s [%d]' % (dpidToStr(event.dpid), event.port)
 		else:
 			print event
-
+	  
 import random
 class RandomSelector(Selector):
 	def __init__(self, members):

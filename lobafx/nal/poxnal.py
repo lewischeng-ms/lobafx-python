@@ -38,6 +38,9 @@ class _Controller(EventMixin):
 	
 	def _handle_GoingUpEvent(self, event):
 		self.listenTo(core.openflow)
+		
+	def _handle_GoingDownEvent(self, event):
+		self.postEvent(event)
 
 	def _handle_ConnectionUp(self, event):
 		self.postEvent(event)
@@ -49,6 +52,9 @@ class _Controller(EventMixin):
 		self.postEvent(event)
 
 	def _handle_ErrorIn(self, event):
+		self.postEvent(event)
+		
+	def _handle_PortStatsReceived(self, event):
 		self.postEvent(event)
 
 	def postEvent(self, event):

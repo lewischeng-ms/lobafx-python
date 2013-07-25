@@ -4,10 +4,16 @@
 import sys
 sys.path.append('/Users/lewischeng/Develop/pox')
 
-from lobafx.fx import core
+from lobafx import fx
 
 def startup():
-	core.startup()
+	fx.core.startup()
+	
+from lobafx.fx.poxlib import *
 
+def setupRules():
+	pass
+	
 if __name__ == '__main__':
+	setupRules()
 	startup()

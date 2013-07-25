@@ -8,8 +8,6 @@ from mininet.topo import Topo
 from mininet.util import irange, ensureRoot
 
 class LobaTopo(Topo):
-	'''Single switch connected to 2 clients and 3 servers.'''
-
 	def __init__(self, **opts):
 		super(LobaTopo, self).__init__(**opts)
 

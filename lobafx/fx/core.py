@@ -18,6 +18,67 @@ class RuleManager(object):
 
 ruleMgr = RuleManager()
 
+######## Setup link manager ########
+class LinkManager(object):
+	def __init__(self):
+		self.links = []
+		self.conns = {}
+		self.wentDown = False
+	
+	def register(self, link):
+		self.links.append(link)
+	
+	def count(self):
+		return len(self.links)
+	
+	def startup(self):
+		t = threading.Thread(target = self.worker, args = [])
+		t.start()
+		
+	def shutdown(self):
+		self.wentDown = True
+	
+	def worker(self):
+		while not self.wentDown:
+			for link in self.links:
+				dpidStr = link.switch1.dpidStr
+				if not dpidStr in self.conns:
+					continue
+				conn = self.conns[dpidStr]
+				conn.send(of.ofp_stats_request( \
+					type = of.OFPST_PORT, \
+					body = of.ofp_port_stats_request(port_no = link.port1)))
+			time.sleep(1)
+
+linkMgr = LinkManager()
+
+######## Setup host manager ########
+class HostManager(object):
+	def __init__(self):
+		self.hosts = []
+		self.wentDown = False
+	
+	def register(self, host):
+		self.hosts.append(host)
+	
+	def count(self):
+		return len(self.hosts)
+	
+	def startup(self):
+		t = threading.Thread(target = self.worker, args = [])
+		t.start()
+		
+	def shutdown(self):
+		self.wentDown = True
+	
+	def worker(self):
+		while not self.wentDown:
+			for host in self.hosts:
+				# Update host loads.
+				host.load += random.randint(1, 5)
+			time.sleep(1)
+
+hostMgr = HostManager()
 
 ######## Setup core listener ########
 class Listener(object):
@@ -30,55 +91,82 @@ class Listener(object):
 		for rule in ruleMgr.rules:
 			if rule.testPredicate(event):
 				rule.performActions(event)
-				return # Match exactly one rule.
+				if not rule.fallThrough:
+					return
 
 listener = Listener()
-
 
 ######## Setup NOS abstraction layer ########
 from lobafx.nal.poxnal import POXNal
 # from lobafx.nal.testnal import TestNal
 
-global nal
 # nal = TestNal()
 nal = POXNal()
 nal.register(listener)
 
+######## Actions that needed by the core ########
+from lobafx.lang.action import Action
+
+class UpdateLinkStats(Action):
+	def perform(self, event):
+		stats = event.stats[0]
+		for link in linkMgr.links:
+			if link.switch1.test(event) and link.port1 == stats.port_no:
+				link.stats = stats
+				
+class RememberConnection(Action):
+	def __init__(self, map):
+		self.map = map
+	
+	def perform(self, event):
+		dpidStr = dpidToStr(event.dpid)
+		log.info("Remember connection with '%s'" % dpidStr)
+		self.map[dpidStr] = event.connection
+		
+class ForgetConnection(Action):
+	def __init__(self, map):
+		self.map = map
+	
+	def perform(self, event):
+		dpidStr = dpidToStr(event.dpid)
+		log.info("Forget connection with '%s'" % dpidStr)
+		self.map[dpidStr] = None
+		
+class Finalize(Action):
+	def perform(self, event):
+		from lobafx.fx.core import linkMgr
+		linkMgr.shutdown()
+		from lobafx.fx.core import hostMgr
+		hostMgr.shutdown()
+		print 'Stats:'
+		for link in linkMgr.links:
+			print 'Link: %s, Load: %d' % (link, link.load)
+		for host in hostMgr.hosts:
+			print 'Host: %s, Load: %d' % (host.ipStr, host.load)
 
 ######## Setup core rules ########
 from lobafx.fx.poxlib import *
 
 # Print all ErrorIn packets.
-IsErrorIn() >> [PrintError()]
+IsErrorIn() >> [ PrintError() ]
 
-# Collect link load.
+(IsConnectionUp() >> [ RememberConnection(linkMgr.conns) ]) \
+	.fallThrough = True
+(IsConnectionDown() >> [ ForgetConnection(linkMgr.conns) ]) \
+	.fallThrough = True
 
-# Collect host load.
+# Use the received port stats to update link stats.
+IsPortStatsReceived() >> [ UpdateLinkStats() ]
 
-# Test rules.
-s1 = FromSwitch('00-00-00-00-00-01')
-s1 >> [ L2Learn() ]
-
-vg = VirtualGateway('10.0.0.254', '02:00:DE:AD:BE:EF', '00-00-00-00-00-02', 1)
-m1 = Host('10.0.0.101', 'D6:F6:C3:05:CA:B9', 2)
-m2 = Host('10.0.0.102', '76:4F:72:F3:10:59', 3)
-m3 = Host('10.0.0.103', '36:8A:3B:4D:EF:2E', 4)
-
-s2 = FromSwitch('00-00-00-00-00-02')
-(s2 & InPort(1) & HttpTo(vg)) >> \
-	[ \
-		ForwardProxy() % SelectLowestLoad([ m1, m2, m3 ]), \
-	  	PrintLoad() % SelectAll([ m1, m2, m3]) \
-	]
-(s2 & ~InPort(1) & HttpFromAny()) >> [ ReverseProxy(vg) ]
-
-HttpTo(vg) >> [ ApplyPath() % SelectLowestLoad([ p1, p2, p3 ]) ]
+# Do some finalizing work when POX goes down.
+IsGoingDown() >> [ Finalize() ]
 
 ######## Startup core ########
 def startup():
-	# Rule for processing unmatched packets.
+	# Rule for processing all unmatched packets.
 	Anything() >> [ PrintEvent() ]
-
-	global nal
+	
+	linkMgr.startup()
+	hostMgr.startup()
 	nal.startup()
-
+	

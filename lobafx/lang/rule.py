@@ -6,6 +6,7 @@ class Rule(Node):
 
 		self.predicate = pred
 		self.actions = acts
+		self.fallThrough = False
 		
 		from lobafx.fx.core import ruleMgr
 		ruleMgr.register(self)
